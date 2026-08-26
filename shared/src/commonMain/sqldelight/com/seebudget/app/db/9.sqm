@@ -1,0 +1,15 @@
+import com.seebudget.app.domain.model.ThemeMode;
+
+-- Version 9 (agregado en el chat, RNF-07 — tema claro/oscuro): tabla
+-- nueva AppPreferences, local-only (no sincronizada, sin equivalente en
+-- Supabase) — fila única con id fijo para guardar la preferencia de
+-- apariencia (Claro/Oscuro/Sistema). CREATE TABLE acá, no ALTER: es una
+-- tabla completamente nueva. Mismo motivo que 3.sqm/4.sqm/6.sqm: sin
+-- este archivo, un dispositivo que ya tenía la app instalada nunca
+-- terminaría con esta tabla al actualizar. Ver AppPreferences.sq /
+-- AppPreferences.kt para el detalle completo de la decisión.
+
+CREATE TABLE AppPreferences (
+    id TEXT NOT NULL PRIMARY KEY,
+    themeMode TEXT AS ThemeMode NOT NULL
+);

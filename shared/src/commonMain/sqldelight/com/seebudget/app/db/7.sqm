@@ -1,0 +1,12 @@
+import com.seebudget.app.domain.model.PlannedItemType;
+
+-- Version 7 (Fase 7, check-in diario): expense gana `type` (INCOME/
+-- EXPENSE) — resuelve el gap documentado en ProjectionEngine ("Expense
+-- siempre es un egreso"). Ver KDoc completo en Expense.kt/Expense.sq.
+--
+-- ALTER TABLE, no CREATE: expense ya existe desde el inicio del proyecto.
+-- DEFAULT 'EXPENSE' porque ya hay filas existentes (todos los gastos
+-- creados hasta ahora) — todas siguen significando exactamente lo mismo
+-- que antes (RF-01, "Expense es siempre un egreso").
+
+ALTER TABLE expense ADD COLUMN type TEXT AS PlannedItemType NOT NULL DEFAULT 'EXPENSE';

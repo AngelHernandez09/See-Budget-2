@@ -1,0 +1,43 @@
+import com.seebudget.app.domain.model.AppLanguage;
+import com.seebudget.app.domain.model.ThemeMode;
+
+-- Preferencia de apariencia (agregado en el chat, RNF-07 — tema claro/
+-- oscuro). Tabla local-only: NO participa del mecanismo de sync
+-- (SyncManager/DTOs/Supabase) — decisión explícita del chat, ver
+-- AppPreferences.kt para el detalle completo. Por eso, a diferencia de
+-- UserSettings/Budget/etc., no tiene createdAt/updatedAt/syncStatus.
+--
+-- Fila única con id fijo (AppPreferences.SINGLETON_ID) en vez de una fila
+-- por usuario: esto es una preferencia del dispositivo, no de la cuenta.
+--
+-- `language` (agregado en el chat, RNF-07 — selector de idioma): mismo
+-- criterio que `themeMode`, columna agregada vía 10.sqm (ALTER TABLE,
+-- no CREATE) para no romper instalaciones existentes.
+CREATE TABLE AppPreferences (
+    id TEXT NOT NULL PRIMARY KEY,
+    themeMode TEXT AS ThemeMode NOT NULL,
+    language TEXT AS AppLanguage NOT NULL
+);
+
+selectSingleton:
+SELECT *
+FROM AppPreferences
+WHERE id = ?;
+
+-- Idempotente (INSERT OR IGNORE): si la fila ya existe no hace nada. Se
+-- llama una vez al arrancar la app (ver AppPreferencesRepositoryImpl) para
+-- garantizar que siempre haya una fila que leer, sin necesitar una
+-- pantalla de onboarding para elegir el tema.
+insertDefaultIfMissing:
+INSERT OR IGNORE INTO AppPreferences (id, themeMode, language)
+VALUES (?, ?, ?);
+
+updateThemeMode:
+UPDATE AppPreferences
+SET themeMode = ?
+WHERE id = ?;
+
+updateLanguage:
+UPDATE AppPreferences
+SET language = ?
+WHERE id = ?;

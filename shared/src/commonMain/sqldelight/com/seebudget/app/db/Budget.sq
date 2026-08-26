@@ -1,0 +1,163 @@
+import kotlinx.datetime.Instant;
+import kotlinx.datetime.LocalDate;
+import kotlinx.datetime.LocalTime;
+import com.seebudget.app.domain.model.BudgetStatus;
+import com.seebudget.app.domain.model.SyncStatus;
+
+-- RF-08 — presupuestos (ciclo de vida ACTIVE/PAUSED/COMPLETED). La regla
+-- "solo uno ACTIVE a la vez" y las transiciones automáticas (auto-activar
+-- al crear si no hay otro activo, auto-completar al llegar `endDate`)
+-- viven en BudgetRepositoryImpl (Fase 5), no acá.
+--
+-- userId (NOT NULL): un presupuesto siempre pertenece a un usuario — no
+-- existe el equivalente a "categoría predefinida/global" de Category. Ver
+-- políticas RLS en supabase/migrations/0005_budget_planned_item.sql.
+--
+-- deletedAt: mismo mecanismo de tombstone que Expense/Category. Al
+-- eliminar un presupuesto se cascadea tombstone a sus PlannedItem (ver
+-- PlannedItem.sq/BudgetRepositoryImpl.delete()), pero los Expense que ya
+-- lo referencian (budgetId) NO se tocan — decisión tomada en el chat: son
+-- registros financieros reales, se preservan tal cual aunque su budgetId
+-- termine apuntando a un presupuesto eliminado. Por eso expense.budgetId
+-- sigue sin FK real contra esta tabla (ver comentario en Expense.sq y en
+-- la migración remota) — una FK con ON DELETE forzaría a elegir entre
+-- bloquear el borrado o poner el budgetId en null, y ninguna de las dos
+-- es la regla elegida.
+CREATE TABLE Budget (
+    id TEXT NOT NULL PRIMARY KEY,
+    userId TEXT NOT NULL,
+    name TEXT NOT NULL,
+    startDate TEXT AS LocalDate NOT NULL,
+    endDate TEXT AS LocalDate,
+    status TEXT AS BudgetStatus NOT NULL,
+    initialBalance INTEGER NOT NULL,
+    baseCurrency TEXT NOT NULL,
+    notificationTime TEXT AS LocalTime,
+    createdAt TEXT AS Instant NOT NULL,
+    updatedAt TEXT AS Instant NOT NULL,
+    syncStatus TEXT AS SyncStatus NOT NULL,
+    deletedAt TEXT AS Instant
+);
+
+CREATE INDEX budget_user_idx ON Budget(userId);
+
+-- Visible al usuario (UI): excluye tombstones. Orden: ACTIVE primero,
+-- después PAUSED, después COMPLETED; dentro de cada grupo, más nuevo
+-- primero — coincide con el agrupamiento de la pantalla "Presupuestos —
+-- Lista" (card activa destacada + secciones Pausados/Completados).
+selectAll:
+SELECT *
+FROM Budget
+WHERE deletedAt IS NULL
+ORDER BY
+    CASE status WHEN 'ACTIVE' THEN 0 WHEN 'PAUSED' THEN 1 ELSE 2 END,
+    createdAt DESC;
+
+selectById:
+SELECT *
+FROM Budget
+WHERE id = ? AND deletedAt IS NULL;
+
+-- Para BudgetRepositoryImpl: saber si ya hay un presupuesto activo (para
+-- decidir el status inicial al crear, o a quién pausar en activate()).
+selectActive:
+SELECT *
+FROM Budget
+WHERE status = 'ACTIVE' AND deletedAt IS NULL
+LIMIT 1;
+
+-- Para el normalizado post-sync (BudgetRepositoryImpl.normalizeActiveStatus,
+-- agregado en el chat): detectar si quedó más de un presupuesto ACTIVE
+-- tras un pull multi-dispositivo (ver KDoc de BudgetRepository).
+selectAllActive:
+SELECT *
+FROM Budget
+WHERE status = 'ACTIVE' AND deletedAt IS NULL;
+
+-- Para el normalizado de ciclo de vida (auto-completar al llegar
+-- endDate, ver BudgetRepositoryImpl.normalizeLifecycle()): candidatos =
+-- no completados, no borrados, con endDate fija.
+selectNotCompletedWithEndDate:
+SELECT *
+FROM Budget
+WHERE status != 'COMPLETED' AND endDate IS NOT NULL AND deletedAt IS NULL;
+
+-- Para el SyncManager: TODAS las filas, incluidos tombstones.
+selectAllForSync:
+SELECT *
+FROM Budget;
+
+insert:
+INSERT INTO Budget (
+    id, userId, name, startDate, endDate, status, initialBalance,
+    baseCurrency, notificationTime, createdAt, updatedAt, syncStatus, deletedAt
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+-- userId/createdAt NO se actualizan acá a propósito. status tampoco: esa
+-- transición pasa por `updateStatus`, no por acá.
+update:
+UPDATE Budget
+SET name = ?, startDate = ?, endDate = ?, initialBalance = ?,
+    baseCurrency = ?, notificationTime = ?, updatedAt = ?, syncStatus = ?
+WHERE id = ?;
+
+-- Transición de status aislada (activar/pausar/completar/auto-completar)
+-- — separada de `update` porque BudgetRepositoryImpl la dispara sola, sin
+-- tocar el resto de los campos editables del formulario.
+updateStatus:
+UPDATE Budget
+SET status = ?, updatedAt = ?, syncStatus = ?
+WHERE id = ?;
+
+-- "Borrado" público (BudgetRepositoryImpl.delete): tombstone, no borra la
+-- fila.
+softDelete:
+UPDATE Budget
+SET deletedAt = ?, updatedAt = ?, syncStatus = 'PENDING'
+WHERE id = ?;
+
+-- Usado por el SyncManager al confirmar un push exitoso.
+markSynced:
+UPDATE Budget
+SET syncStatus = 'SYNCED'
+WHERE id = ?;
+
+-- Usado por el SyncManager en el pull: reemplaza la fila completa con lo
+-- que vino de Supabase (ya se decidió en Kotlin, vía LWW, que corresponde
+-- pisar la fila local).
+replaceFromRemote:
+INSERT OR REPLACE INTO Budget (
+    id, userId, name, startDate, endDate, status, initialBalance,
+    baseCurrency, notificationTime, createdAt, updatedAt, syncStatus, deletedAt
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SYNCED', NULL);
+
+-- Limpieza final: un tombstone cuyo borrado ya se confirmó en el servidor
+-- no necesita seguir existiendo localmente.
+hardDeleteSynced:
+DELETE FROM Budget
+WHERE id = ? AND deletedAt IS NOT NULL;
+
+-- Propagación de borrados entre dispositivos (SyncManager, agregado en
+-- el chat — resuelve el gap documentado en el KDoc de SyncManager): a
+-- diferencia de hardDeleteSynced (exige un tombstone local previo,
+-- deletedAt IS NOT NULL), esta fila nunca se tombstoneó acá — ya no
+-- existe en el servidor porque otro dispositivo la borró y ese borrado
+-- ya se confirmó ahí. Se borra sin condición, sin pasar por softDelete
+-- (no hay nada que re-subir: el servidor ya no tiene la fila).
+deleteById:
+DELETE FROM Budget
+WHERE id = ?;
+
+-- Bug reportado por el usuario (multi-cuenta en el mismo dispositivo,
+-- agregado en el chat): AuthRepositoryImpl.signOut() no vaciaba el
+-- SQLite local, y como las queries de lectura (selectAll, etc.) nunca
+-- filtran por userId (pensadas para una sola cuenta a la vez por
+-- dispositivo), la cuenta B que iniciaba sesión después de que A
+-- cerrara sesión veía los datos de A. Se usa acá (sin WHERE, a
+-- diferencia de deleteById/hardDeleteSynced) para vaciar la tabla
+-- completa al cerrar sesión — el siguiente signIn repuebla todo desde
+-- cero vía el sync inicial normal.
+deleteAll:
+DELETE FROM Budget;

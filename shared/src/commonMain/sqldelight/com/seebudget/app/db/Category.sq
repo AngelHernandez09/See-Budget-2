@@ -1,0 +1,125 @@
+import kotlinx.datetime.Instant;
+import com.seebudget.app.domain.model.SyncStatus;
+
+-- RF-02 — categorías predefinidas y personalizadas (isDefault distingue).
+--
+-- userId: null = predefinida/global, compartida por todo usuario; con
+-- valor = personalizada, propiedad de ese usuario. Ver políticas RLS en
+-- supabase/migrations/0001_init_category_expense_rls.sql.
+--
+-- createdAt/updatedAt/syncStatus/deletedAt (SyncManager, Fase 2): mismo
+-- mecanismo que Expense (ver Expense.sq) — last-write-wins por updatedAt,
+-- syncStatus marca qué falta subir, deletedAt es un tombstone local: la
+-- fila se filtra de las queries visibles al usuario apenas se marca, y
+-- recién se borra físicamente cuando el SyncManager confirma el borrado
+-- remoto. Ver supabase/migrations/0002_category_timestamps.sql para el
+-- lado remoto (sin deletedAt/syncStatus ahí — son bookkeeping puramente
+-- local).
+CREATE TABLE category (
+    id TEXT NOT NULL PRIMARY KEY,
+    userId TEXT,
+    name TEXT NOT NULL,
+    icon TEXT NOT NULL,
+    color TEXT NOT NULL,
+    isDefault INTEGER AS kotlin.Boolean NOT NULL DEFAULT 0,
+    createdAt TEXT AS Instant NOT NULL,
+    updatedAt TEXT AS Instant NOT NULL,
+    syncStatus TEXT AS SyncStatus NOT NULL,
+    deletedAt TEXT AS Instant
+);
+
+-- Seed de categorías predefinidas (RF-02). IDs fijos para que coincidan
+-- con el seed remoto (migración 0001). syncStatus SYNCED + timestamp
+-- sentinela porque son globales y ya existen del lado remoto — el
+-- SyncManager nunca las sube (no están PENDING), solo eventualmente las
+-- pisa con lo que traiga el pull (idempotente: mismos valores).
+--
+-- icon/color son placeholders neutros: ni el documento de requerimientos
+-- ni la guía de diseño definen íconos o colores específicos por categoría.
+-- Ajustar cuando se defina el sistema de íconos y/o un color propio.
+INSERT INTO category (id, userId, name, icon, color, isDefault, createdAt, updatedAt, syncStatus, deletedAt) VALUES
+    ('default-comida', NULL, 'Comida', 'comida', '#141410', 1, '1970-01-01T00:00:00Z', '1970-01-01T00:00:00Z', 'SYNCED', NULL),
+    ('default-transporte', NULL, 'Transporte', 'transporte', '#141410', 1, '1970-01-01T00:00:00Z', '1970-01-01T00:00:00Z', 'SYNCED', NULL),
+    ('default-vivienda', NULL, 'Vivienda', 'vivienda', '#141410', 1, '1970-01-01T00:00:00Z', '1970-01-01T00:00:00Z', 'SYNCED', NULL),
+    ('default-ocio', NULL, 'Ocio', 'ocio', '#141410', 1, '1970-01-01T00:00:00Z', '1970-01-01T00:00:00Z', 'SYNCED', NULL),
+    ('default-salud', NULL, 'Salud', 'salud', '#141410', 1, '1970-01-01T00:00:00Z', '1970-01-01T00:00:00Z', 'SYNCED', NULL),
+    ('default-otros', NULL, 'Otros', 'otros', '#141410', 1, '1970-01-01T00:00:00Z', '1970-01-01T00:00:00Z', 'SYNCED', NULL);
+
+-- Visible al usuario (UI): excluye tombstones.
+selectAll:
+SELECT *
+FROM category
+WHERE deletedAt IS NULL
+ORDER BY name ASC;
+
+selectById:
+SELECT *
+FROM category
+WHERE id = ? AND deletedAt IS NULL;
+
+-- Para el SyncManager: TODAS las filas, incluidos tombstones — necesita
+-- verlas para decidir qué empujar/limpiar.
+selectAllForSync:
+SELECT *
+FROM category;
+
+insert:
+INSERT INTO category (id, userId, name, icon, color, isDefault, createdAt, updatedAt, syncStatus, deletedAt)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+-- userId/createdAt NO se actualizan acá a propósito (no cambian después
+-- de creada la fila).
+update:
+UPDATE category
+SET name = ?, icon = ?, color = ?, isDefault = ?, updatedAt = ?, syncStatus = ?
+WHERE id = ?;
+
+-- "Borrado" público (CategoryRepositoryImpl.delete): tombstone, no borra
+-- la fila — evita romper la FK de expense.categoryId y permite avisarle
+-- al servidor en el próximo sync.
+softDelete:
+UPDATE category
+SET deletedAt = ?, updatedAt = ?, syncStatus = 'PENDING'
+WHERE id = ?;
+
+-- Usado por el SyncManager al confirmar un push exitoso (creación/edición).
+markSynced:
+UPDATE category
+SET syncStatus = 'SYNCED'
+WHERE id = ?;
+
+-- Usado por el SyncManager en el pull: reemplaza la fila completa con lo
+-- que vino de Supabase (ya se decidió en Kotlin, vía LWW, que corresponde
+-- pisar la fila local).
+replaceFromRemote:
+INSERT OR REPLACE INTO category (id, userId, name, icon, color, isDefault, createdAt, updatedAt, syncStatus, deletedAt)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'SYNCED', NULL);
+
+-- Limpieza final: un tombstone cuyo borrado ya se confirmó en el servidor
+-- no necesita seguir existiendo localmente.
+hardDeleteSynced:
+DELETE FROM category
+WHERE id = ? AND deletedAt IS NOT NULL;
+
+-- Propagación de borrados entre dispositivos (SyncManager, agregado en
+-- el chat — resuelve el gap documentado en el KDoc de SyncManager): a
+-- diferencia de hardDeleteSynced (exige un tombstone local previo,
+-- deletedAt IS NOT NULL), esta fila nunca se tombstoneó acá — ya no
+-- existe en el servidor porque otro dispositivo la borró y ese borrado
+-- ya se confirmó ahí. Se borra sin condición, sin pasar por softDelete
+-- (no hay nada que re-subir: el servidor ya no tiene la fila).
+deleteById:
+DELETE FROM category
+WHERE id = ?;
+
+-- Bug reportado por el usuario (multi-cuenta en el mismo dispositivo,
+-- agregado en el chat): AuthRepositoryImpl.signOut() no vaciaba el
+-- SQLite local, y como las queries de lectura (selectAll, etc.) nunca
+-- filtran por userId (pensadas para una sola cuenta a la vez por
+-- dispositivo), la cuenta B que iniciaba sesión después de que A
+-- cerrara sesión veía los datos de A. Se usa acá (sin WHERE, a
+-- diferencia de deleteById/hardDeleteSynced) para vaciar la tabla
+-- completa al cerrar sesión — el siguiente signIn repuebla todo desde
+-- cero vía el sync inicial normal.
+deleteAll:
+DELETE FROM category;

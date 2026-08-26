@@ -1,0 +1,8 @@
+-- Version 8 (Fase 7, check-in diario): PlannedItem gana `categoryId`
+-- (nullable) — resuelve un gap detectado al diseñar el Check-in (RF-10):
+-- confirmar un ítem planificado crea un Expense, que requiere categoryId
+-- (RF-01), pero PlannedItem no tenía ninguna. Espeja
+-- supabase/migrations/0009_planned_item_category.sql. Ver PlannedItem.kt
+-- para el detalle completo de la decisión.
+
+ALTER TABLE PlannedItem ADD COLUMN categoryId TEXT;

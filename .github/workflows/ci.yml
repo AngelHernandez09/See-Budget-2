@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  shared-desktop-web:
+    name: Shared / Desktop / Web (Ubuntu)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Cache Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Tests de shared (jvmTest)
+        run: ./gradlew :shared:jvmTest --stacktrace
+
+      - name: Compilar Desktop
+        run: ./gradlew :desktopApp:assemble --stacktrace
+
+      - name: Compilar Web (wasmJs + js)
+        run: ./gradlew :webApp:wasmJsBrowserDistribution :webApp:jsBrowserDistribution --stacktrace
+
+  android:
+    name: Android
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Cache Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Tests de shared (androidHostTest)
+        run: ./gradlew :shared:testAndroidHostTest --stacktrace
+
+      - name: Lint + compilar debug
+        run: ./gradlew :androidApp:assembleDebug --stacktrace
+
+  ios:
+    name: iOS
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Cache Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Tests de shared (iosSimulatorArm64Test)
+        run: ./gradlew :shared:iosSimulatorArm64Test --stacktrace
+
+      - name: Compilar app iOS (simulador)
+        run: |
+          xcodebuild -project iosApp/iosApp.xcodeproj -scheme iosApp \
+            -destination 'platform=iOS Simulator,name=iPhone 16' build

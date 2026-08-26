@@ -1,0 +1,141 @@
+import kotlinx.datetime.Instant;
+import kotlinx.datetime.LocalDate;
+import com.seebudget.app.domain.model.ProjectionSnapshotItem;
+import com.seebudget.app.domain.model.SyncStatus;
+import kotlin.collections.List;
+
+-- RF-09 — líneas de referencia congeladas del ProjectionEngine (Fase 6).
+-- Ver KDoc completo en ProjectionSnapshot.kt (qué congela, cuándo se
+-- pisa vs. se genera una nueva, mecanismo de sync).
+--
+-- userId (NOT NULL, denormalizado): mismo criterio que Budget/PlannedItem,
+-- políticas RLS simples sin join. Ver supabase/migrations/
+-- 0007_projection_snapshot.sql.
+--
+-- deletedAt: tombstone. Se marca tanto en cascada al eliminar su Budget
+-- (mismo mecanismo que PlannedItem, ver BudgetRepositoryImpl.delete())
+-- como al borrar una línea puntual desde "Historial de proyecciones"
+-- (agregado en el chat — el documento no lo contemplaba originalmente,
+-- pero no hay ninguna regla que lo prohíba; confirmado con el usuario).
+CREATE TABLE ProjectionSnapshot (
+    id TEXT NOT NULL PRIMARY KEY,
+    budgetId TEXT NOT NULL REFERENCES Budget(id),
+    userId TEXT NOT NULL,
+    label TEXT NOT NULL,
+    frozenInitialBalance INTEGER NOT NULL,
+    frozenStartDate TEXT AS LocalDate NOT NULL,
+    frozenBaseCurrency TEXT NOT NULL,
+    frozenPlannedItems TEXT AS List<ProjectionSnapshotItem> NOT NULL,
+    createdAt TEXT AS Instant NOT NULL,
+    updatedAt TEXT AS Instant NOT NULL,
+    syncStatus TEXT AS SyncStatus NOT NULL,
+    deletedAt TEXT AS Instant
+);
+
+CREATE INDEX projection_snapshot_budget_idx ON ProjectionSnapshot(budgetId);
+
+-- Visible al usuario (UI): excluye tombstones, de un presupuesto puntual,
+-- más nuevo primero — orden que necesita tanto "Historial de
+-- proyecciones" (todas) como "tomar la línea de referencia vigente"
+-- (la primera de esta lista).
+selectByBudget:
+SELECT *
+FROM ProjectionSnapshot
+WHERE budgetId = ? AND deletedAt IS NULL
+ORDER BY createdAt DESC;
+
+-- La línea de referencia vigente del Dashboard: la más reciente.
+selectLatestByBudget:
+SELECT *
+FROM ProjectionSnapshot
+WHERE budgetId = ? AND deletedAt IS NULL
+ORDER BY createdAt DESC
+LIMIT 1;
+
+selectById:
+SELECT *
+FROM ProjectionSnapshot
+WHERE id = ? AND deletedAt IS NULL;
+
+-- Para la cascada de borrado de Budget (BudgetRepositoryImpl.delete):
+-- todos los snapshots vivos de ese presupuesto, para tombstonearlos uno
+-- por uno igual que PlannedItem.
+selectActiveIdsByBudget:
+SELECT id
+FROM ProjectionSnapshot
+WHERE budgetId = ? AND deletedAt IS NULL;
+
+-- Para el SyncManager: TODAS las filas, incluidos tombstones.
+selectAllForSync:
+SELECT *
+FROM ProjectionSnapshot;
+
+insert:
+INSERT INTO ProjectionSnapshot (
+    id, budgetId, userId, label, frozenInitialBalance, frozenStartDate,
+    frozenBaseCurrency, frozenPlannedItems, createdAt, updatedAt,
+    syncStatus, deletedAt
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+-- "Corrección de error" (RF-09): pisa la línea de referencia existente en
+-- vez de generar una nueva. budgetId/userId/createdAt NO se tocan.
+update:
+UPDATE ProjectionSnapshot
+SET label = ?, frozenInitialBalance = ?, frozenStartDate = ?,
+    frozenBaseCurrency = ?, frozenPlannedItems = ?, updatedAt = ?,
+    syncStatus = ?
+WHERE id = ?;
+
+-- "Borrado" (cascada de Budget o individual desde el historial, ver
+-- comentario en la tabla): tombstone, no borra la fila.
+softDelete:
+UPDATE ProjectionSnapshot
+SET deletedAt = ?, updatedAt = ?, syncStatus = 'PENDING'
+WHERE id = ?;
+
+-- Usado por el SyncManager al confirmar un push exitoso.
+markSynced:
+UPDATE ProjectionSnapshot
+SET syncStatus = 'SYNCED'
+WHERE id = ?;
+
+-- Usado por el SyncManager en el pull: reemplaza la fila completa con lo
+-- que vino de Supabase (ya se decidió en Kotlin, vía LWW, que corresponde
+-- pisar la fila local).
+replaceFromRemote:
+INSERT OR REPLACE INTO ProjectionSnapshot (
+    id, budgetId, userId, label, frozenInitialBalance, frozenStartDate,
+    frozenBaseCurrency, frozenPlannedItems, createdAt, updatedAt,
+    syncStatus, deletedAt
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SYNCED', NULL);
+
+-- Limpieza final: un tombstone cuyo borrado ya se confirmó en el servidor
+-- no necesita seguir existiendo localmente.
+hardDeleteSynced:
+DELETE FROM ProjectionSnapshot
+WHERE id = ? AND deletedAt IS NOT NULL;
+
+-- Propagación de borrados entre dispositivos (SyncManager, agregado en
+-- el chat — resuelve el gap documentado en el KDoc de SyncManager): a
+-- diferencia de hardDeleteSynced (exige un tombstone local previo,
+-- deletedAt IS NOT NULL), esta fila nunca se tombstoneó acá — ya no
+-- existe en el servidor porque otro dispositivo la borró y ese borrado
+-- ya se confirmó ahí. Se borra sin condición, sin pasar por softDelete
+-- (no hay nada que re-subir: el servidor ya no tiene la fila).
+deleteById:
+DELETE FROM ProjectionSnapshot
+WHERE id = ?;
+
+-- Bug reportado por el usuario (multi-cuenta en el mismo dispositivo,
+-- agregado en el chat): AuthRepositoryImpl.signOut() no vaciaba el
+-- SQLite local, y como las queries de lectura (selectAll, etc.) nunca
+-- filtran por userId (pensadas para una sola cuenta a la vez por
+-- dispositivo), la cuenta B que iniciaba sesión después de que A
+-- cerrara sesión veía los datos de A. Se usa acá (sin WHERE, a
+-- diferencia de deleteById/hardDeleteSynced) para vaciar la tabla
+-- completa al cerrar sesión — el siguiente signIn repuebla todo desde
+-- cero vía el sync inicial normal.
+deleteAll:
+DELETE FROM ProjectionSnapshot;

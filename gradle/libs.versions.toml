@@ -1,0 +1,112 @@
+[versions]
+agp = "9.0.1"
+android-compileSdk = "36"
+android-minSdk = "26"
+android-targetSdk = "36"
+androidx-activity = "1.13.0"
+androidx-appcompat = "1.7.1"
+androidx-core = "1.17.0" # Fase 8 — 1.18.0+/1.19.0 exigen compileSdk 37 (ver mismo caso ya documentado abajo con Vico); 1.17.0 es la última que compila contra compileSdk 36/AGP 9.0.1 sin subir el toolchain (fuera de alcance de esta fase).
+androidx-espresso = "3.7.0"
+androidx-lifecycle = "2.11.0-beta01"
+# Fase 9 (Navigation Compose, agregado en el chat) — Navigation 2
+# (NavHost/NavController con rutas type-safe vía kotlinx.serialization),
+# no Navigation 3: decisión tomada en el chat porque Navigation 3 todavía
+# no confirma soporte oficial en Wasm y el historial del navegador en Web
+# depende de una librería de terceros marcada como prueba de concepto —
+# riesgo real para 2 de las 5 plataformas de esta app. 2.9.2 es la última
+# estable (2.10.0 todavía en alpha) en Maven Central al momento de fijarla.
+androidx-navigation-compose = "2.9.2"
+androidx-testExt = "1.3.0"
+composeMultiplatform = "1.11.1"
+junit = "4.13.2"
+kotlin = "2.4.10"
+kotlin-wrappers = "2026.7.7"
+kotlinx-coroutines = "1.11.0"
+material = "1.14.0"
+material3 = "1.11.0-alpha07"
+
+# Fase 0 — agregados para el setup del proyecto (RF-07 sync, RF-09 modelo de
+# datos, persistencia offline-first). No pude verificar contra Maven Central
+# si son las últimas versiones estables (ver README, sección Fase 0) —
+# revisar antes de la primera sincronización real.
+koin = "4.1.0"
+ktor = "3.3.1"
+kotlinx-serialization = "1.9.0"
+kotlinx-datetime = "0.7.1"
+sqldelight = "2.1.0"
+supabase = "3.2.5"
+
+# Fase 4 — gráficos (Vico, RF-03). Confirmado en vivo: soporta Android/
+# JVM/Kotlin-Native(iOS)/JS/Wasm en el artefacto "compose" (no "multiplatform",
+# nombre que tenía en versiones 2.x).
+# Fijado en 3.2.3 (no 3.3.0, la última) a propósito: 3.3.0 subió su
+# compileSdk mínimo a 37, y este proyecto todavía está en compileSdk 36 /
+# AGP 9.0.1 (subir ambos es un cambio de toolchain más grande, fuera de
+# alcance de Fase 4). 3.2.3 expone la misma API Cartesian (verificado
+# contra el código fuente de Vico en ese tag) — no se pierde nada de lo
+# que ya se usa en TrendLineChart.kt/CategoryBarChart.kt.
+vico = "3.2.3"
+
+[libraries]
+kotlin-test = { module = "org.jetbrains.kotlin:kotlin-test", version.ref = "kotlin" }
+kotlin-testJunit = { module = "org.jetbrains.kotlin:kotlin-test-junit", version.ref = "kotlin" }
+junit = { module = "junit:junit", version.ref = "junit" }
+androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "androidx-core" }
+androidx-testExt-junit = { module = "androidx.test.ext:junit", version.ref = "androidx-testExt" }
+androidx-espresso-core = { module = "androidx.test.espresso:espresso-core", version.ref = "androidx-espresso" }
+androidx-appcompat = { module = "androidx.appcompat:appcompat", version.ref = "androidx-appcompat" }
+androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "androidx-activity" }
+google-material = { module = "com.google.android.material:material", version.ref = "material" }
+compose-uiTooling = { module = "org.jetbrains.compose.ui:ui-tooling", version.ref = "composeMultiplatform" }
+androidx-lifecycle-viewmodelCompose = { module = "org.jetbrains.androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "androidx-lifecycle" }
+androidx-lifecycle-runtimeCompose = { module = "org.jetbrains.androidx.lifecycle:lifecycle-runtime-compose", version.ref = "androidx-lifecycle" }
+androidx-navigation-compose = { module = "org.jetbrains.androidx.navigation:navigation-compose", version.ref = "androidx-navigation-compose" }
+compose-runtime = { module = "org.jetbrains.compose.runtime:runtime", version.ref = "composeMultiplatform" }
+compose-foundation = { module = "org.jetbrains.compose.foundation:foundation", version.ref = "composeMultiplatform" }
+compose-material3 = { module = "org.jetbrains.compose.material3:material3", version.ref = "material3" }
+compose-ui = { module = "org.jetbrains.compose.ui:ui", version.ref = "composeMultiplatform" }
+compose-components-resources = { module = "org.jetbrains.compose.components:components-resources", version.ref = "composeMultiplatform" }
+compose-uiToolingPreview = { module = "org.jetbrains.compose.ui:ui-tooling-preview", version.ref = "composeMultiplatform" }
+kotlinx-coroutinesSwing = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-swing", version.ref = "kotlinx-coroutines" }
+wrappers-browser = { module = "org.jetbrains.kotlin-wrappers:kotlin-browser", version.ref = "kotlin-wrappers" }
+
+# Fase 0
+kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinx-serialization" }
+kotlinx-datetime = { module = "org.jetbrains.kotlinx:kotlinx-datetime", version.ref = "kotlinx-datetime" }
+
+koin-core = { module = "io.insert-koin:koin-core", version.ref = "koin" }
+koin-compose = { module = "io.insert-koin:koin-compose", version.ref = "koin" }
+koin-compose-viewmodel = { module = "io.insert-koin:koin-compose-viewmodel", version.ref = "koin" }
+koin-android = { module = "io.insert-koin:koin-android", version.ref = "koin" }
+
+ktor-client-core = { module = "io.ktor:ktor-client-core", version.ref = "ktor" }
+ktor-client-content-negotiation = { module = "io.ktor:ktor-client-content-negotiation", version.ref = "ktor" }
+ktor-serialization-kotlinx-json = { module = "io.ktor:ktor-serialization-kotlinx-json", version.ref = "ktor" }
+ktor-client-android = { module = "io.ktor:ktor-client-android", version.ref = "ktor" }
+ktor-client-darwin = { module = "io.ktor:ktor-client-darwin", version.ref = "ktor" }
+ktor-client-okhttp = { module = "io.ktor:ktor-client-okhttp", version.ref = "ktor" }
+ktor-client-js = { module = "io.ktor:ktor-client-js", version.ref = "ktor" }
+
+sqldelight-runtime = { module = "app.cash.sqldelight:runtime", version.ref = "sqldelight" }
+sqldelight-coroutines = { module = "app.cash.sqldelight:coroutines-extensions", version.ref = "sqldelight" }
+sqldelight-android-driver = { module = "app.cash.sqldelight:android-driver", version.ref = "sqldelight" }
+sqldelight-native-driver = { module = "app.cash.sqldelight:native-driver", version.ref = "sqldelight" }
+sqldelight-sqlite-driver = { module = "app.cash.sqldelight:sqlite-driver", version.ref = "sqldelight" }
+sqldelight-webworker-driver = { module = "app.cash.sqldelight:web-worker-driver", version.ref = "sqldelight" }
+
+supabase-bom = { module = "io.github.jan-tennert.supabase:bom", version.ref = "supabase" }
+supabase-postgrest = { module = "io.github.jan-tennert.supabase:postgrest-kt" }
+supabase-auth = { module = "io.github.jan-tennert.supabase:auth-kt" }
+supabase-realtime = { module = "io.github.jan-tennert.supabase:realtime-kt" }
+
+vico-compose = { module = "com.patrykandpatrick.vico:compose", version.ref = "vico" }
+
+[plugins]
+androidApplication = { id = "com.android.application", version.ref = "agp" }
+androidMultiplatformLibrary = { id = "com.android.kotlin.multiplatform.library", version.ref = "agp" }
+composeMultiplatform = { id = "org.jetbrains.compose", version.ref = "composeMultiplatform" }
+composeCompiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+kotlinJvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+kotlinMultiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
+kotlinSerialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+sqldelight = { id = "app.cash.sqldelight", version.ref = "sqldelight" }

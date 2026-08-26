@@ -1,0 +1,13 @@
+import com.seebudget.app.domain.model.AppLanguage;
+
+-- Version 10 (agregado en el chat, RNF-07 — selector de idioma). ALTER
+-- TABLE porque AppPreferences ya existe (creada en 9.sqm) — mismo motivo
+-- que el resto de los .sqm: sin este archivo, un dispositivo que ya
+-- tenía la app instalada nunca terminaría con esta columna al
+-- actualizar. Default 'SYSTEM': las filas existentes (que ya eligieron
+-- themeMode) arrancan siguiendo el idioma del dispositivo, que es
+-- exactamente el comportamiento que tenía la app antes de que existiera
+-- esta preferencia (español hardcodeado, que es lo que devuelve SYSTEM
+-- para cualquier idioma de dispositivo que no sea inglés — ver
+-- LocalAppLocale.kt).
+ALTER TABLE AppPreferences ADD COLUMN language TEXT AS AppLanguage NOT NULL DEFAULT 'SYSTEM';

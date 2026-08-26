@@ -1,0 +1,76 @@
+import kotlinx.datetime.Instant;
+import kotlinx.datetime.LocalTime;
+import com.seebudget.app.domain.model.SyncStatus;
+
+-- RF-04/Fase 3 — perfil y preferencias del usuario (dominio: User.kt).
+--
+-- Se llama `UserSettings` (no `User`) para evitar la palabra reservada
+-- `user` en SQL/Postgres y no chocar conceptualmente con `auth.users` de
+-- Supabase Auth: esta tabla es el perfil de *dominio*, no la cuenta de
+-- autenticación. Ver nota completa en User.kt.
+--
+-- id = mismo UUID que auth.users.id (no se genera uno nuevo, a diferencia
+-- de Expense/Category) — la fila de settings de cada usuario coincide 1:1
+-- con su cuenta de Supabase Auth.
+--
+-- Mismo mecanismo de sync que Category/Expense (createdAt/updatedAt/
+-- syncStatus, LWW por updatedAt, ver SyncManager.kt) EXCEPTO deletedAt: no
+-- hay hoy una funcionalidad de "borrar mi perfil" definida en ningún RF,
+-- así que no se agrega tombstone hasta que haga falta.
+CREATE TABLE UserSettings (
+    id TEXT NOT NULL PRIMARY KEY,
+    email TEXT NOT NULL,
+    baseCurrency TEXT NOT NULL,
+    locale TEXT NOT NULL,
+    dailyReminderTime TEXT AS LocalTime,
+    createdAt TEXT AS Instant NOT NULL,
+    updatedAt TEXT AS Instant NOT NULL,
+    syncStatus TEXT AS SyncStatus NOT NULL
+);
+
+selectById:
+SELECT *
+FROM UserSettings
+WHERE id = ?;
+
+-- Para el SyncManager (mismo patrón que Category/Expense): todas las
+-- filas, sin filtrar.
+selectAllForSync:
+SELECT *
+FROM UserSettings;
+
+insert:
+INSERT INTO UserSettings (id, email, baseCurrency, locale, dailyReminderTime, createdAt, updatedAt, syncStatus)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+
+-- id/email/createdAt no se actualizan acá: no cambian después de creada
+-- la fila (el email lo gestiona Supabase Auth, no esta tabla).
+update:
+UPDATE UserSettings
+SET baseCurrency = ?, locale = ?, dailyReminderTime = ?, updatedAt = ?, syncStatus = ?
+WHERE id = ?;
+
+-- Usado por el SyncManager al confirmar un push exitoso.
+markSynced:
+UPDATE UserSettings
+SET syncStatus = 'SYNCED'
+WHERE id = ?;
+
+-- Usado por el SyncManager en el pull: reemplaza la fila completa con lo
+-- que vino de Supabase (ya se decidió en Kotlin, vía LWW, que corresponde
+-- pisar la fila local).
+replaceFromRemote:
+INSERT OR REPLACE INTO UserSettings (id, email, baseCurrency, locale, dailyReminderTime, createdAt, updatedAt, syncStatus)
+VALUES (?, ?, ?, ?, ?, ?, ?, 'SYNCED');
+
+-- Bug reportado por el usuario (multi-cuenta en el mismo dispositivo,
+-- agregado en el chat): AuthRepositoryImpl.signOut() no vaciaba el
+-- SQLite local, y como las queries de lectura (selectAll, etc.) nunca
+-- filtran por userId (pensadas para una sola cuenta a la vez por
+-- dispositivo), la cuenta B que iniciaba sesión después de que A
+-- cerrara sesión veía los datos de A. Se usa acá (sin WHERE, a
+-- diferencia de deleteById/hardDeleteSynced) para vaciar la tabla
+-- completa al cerrar sesión — el siguiente signIn repuebla todo desde
+-- cero vía el sync inicial normal.
+deleteAll:
+DELETE FROM UserSettings;

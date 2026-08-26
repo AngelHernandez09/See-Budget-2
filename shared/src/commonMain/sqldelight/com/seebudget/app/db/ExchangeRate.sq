@@ -1,0 +1,35 @@
+import kotlinx.datetime.Instant;
+import kotlinx.datetime.LocalDate;
+
+-- RF-04 — caché local de tasas de cambio (Frankfurter). NO se sincroniza
+-- con Supabase: son datos públicos de referencia, no le pertenecen a
+-- ningún usuario (a diferencia de UserSettings/category/expense) — cada
+-- dispositivo arma su propio caché pidiéndoselas directamente a la API.
+-- Por eso esta tabla no tiene columnas de sync ni participa del
+-- SyncManager. Ver nota completa en el modelo de dominio ExchangeRate.kt.
+--
+-- Clave: (date, baseCurrency, targetCurrency) — se cachea por fecha
+-- exacta, no solo "la última", porque RF-03 exige convertir cada gasto
+-- con la tasa vigente en SU fecha.
+CREATE TABLE ExchangeRate (
+    date TEXT AS LocalDate NOT NULL,
+    baseCurrency TEXT NOT NULL,
+    targetCurrency TEXT NOT NULL,
+    rate REAL NOT NULL,
+    fetchedAt TEXT AS Instant NOT NULL,
+    PRIMARY KEY (date, baseCurrency, targetCurrency)
+);
+
+selectRate:
+SELECT *
+FROM ExchangeRate
+WHERE date = ? AND baseCurrency = ? AND targetCurrency = ?;
+
+-- Política de refresco (chat: 1 vez por día): antes de pedirle a la API
+-- la tasa de una fecha/par ya cacheados, se consulta esto primero. La
+-- lógica de "cuándo repreguntar igual" (ej. la tasa de HOY puede cambiar
+-- de fetchedAt a fetchedAt dentro del mismo día si aún no se publicó la
+-- definitiva) vive en la próxima capa (ExchangeRateRepository), no acá.
+insertOrReplace:
+INSERT OR REPLACE INTO ExchangeRate (date, baseCurrency, targetCurrency, rate, fetchedAt)
+VALUES (?, ?, ?, ?, ?);

@@ -1,0 +1,35 @@
+import kotlinx.datetime.Instant;
+import kotlinx.datetime.LocalDate;
+import kotlinx.datetime.LocalTime;
+import com.seebudget.app.domain.model.SyncStatus;
+
+-- Version 3 (Fase 3, multi-moneda): tablas nuevas — perfil de usuario
+-- sincronizado (UserSettings, ver User.kt) y caché local de tasas de
+-- cambio (ExchangeRate, ver ExchangeRate.kt). CREATE TABLE acá, no ALTER:
+-- son tablas completamente nuevas, no cambios a category/expense.
+--
+-- Sin este archivo, un dispositivo que ya tenía la app instalada (schema
+-- versión 3, con solo 1.sqm+2.sqm) nunca terminaría con estas dos tablas
+-- al actualizar: Schema.migrate() corre según la versión guardada en el
+-- propio SQLite (`user_version`), no vuelve a leer los .sq base como si
+-- fuera una instalación nueva — eso solo pasa en Schema.create().
+
+CREATE TABLE UserSettings (
+    id TEXT NOT NULL PRIMARY KEY,
+    email TEXT NOT NULL,
+    baseCurrency TEXT NOT NULL,
+    locale TEXT NOT NULL,
+    dailyReminderTime TEXT AS LocalTime,
+    createdAt TEXT AS Instant NOT NULL,
+    updatedAt TEXT AS Instant NOT NULL,
+    syncStatus TEXT AS SyncStatus NOT NULL
+);
+
+CREATE TABLE ExchangeRate (
+    date TEXT AS LocalDate NOT NULL,
+    baseCurrency TEXT NOT NULL,
+    targetCurrency TEXT NOT NULL,
+    rate REAL NOT NULL,
+    fetchedAt TEXT AS Instant NOT NULL,
+    PRIMARY KEY (date, baseCurrency, targetCurrency)
+);

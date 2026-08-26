@@ -1,0 +1,149 @@
+import kotlinx.datetime.Instant;
+import kotlinx.datetime.LocalDate;
+import com.seebudget.app.domain.model.PlannedItemType;
+import com.seebudget.app.domain.model.SyncStatus;
+
+-- RF-01 — tabla única de gastos, también usada por el módulo de
+-- presupuestos (budgetId/plannedItemId nullable, sección 7 del documento).
+-- FK a budget/planned_item se agrega en Fase 5 cuando existan esas tablas.
+--
+-- userId (NOT NULL): un gasto SIEMPRE pertenece a un usuario. Ver
+-- políticas RLS en supabase/migrations/0001_init_category_expense_rls.sql.
+--
+-- deletedAt (SyncManager, Fase 2): tombstone local — "borrar" un gasto
+-- marca esta columna en vez de eliminar la fila (ver
+-- ExpenseRepositoryImpl.delete()); las queries visibles al usuario la
+-- filtran, y el SyncManager borra la fila remota de verdad (DELETE, sin
+-- tombstone del lado de Supabase) y recién ahí limpia la fila local.
+--
+-- type (Fase 7, agregado en el chat — ver 7.sqm para el ALTER TABLE y
+-- Expense.kt para el KDoc completo): resuelve el gap documentado en
+-- ProjectionEngine ("Expense siempre es un egreso"). Reusa PlannedItemType
+-- en vez de una tabla separada — misma convención de "tabla única" que ya
+-- rige el resto del modelo. `amount` sigue siendo siempre positivo; el
+-- signo lo da `type`, no `amount`.
+CREATE TABLE expense (
+    id TEXT NOT NULL PRIMARY KEY,
+    userId TEXT NOT NULL,
+    amount INTEGER NOT NULL,
+    currency TEXT NOT NULL,
+    categoryId TEXT NOT NULL REFERENCES category(id),
+    date TEXT AS LocalDate NOT NULL,
+    note TEXT,
+    receiptImageUrl TEXT,
+    paymentMethod TEXT,
+    createdAt TEXT AS Instant NOT NULL,
+    updatedAt TEXT AS Instant NOT NULL,
+    syncStatus TEXT AS SyncStatus NOT NULL,
+    budgetId TEXT,
+    plannedItemId TEXT,
+    isPlannedOverride INTEGER AS kotlin.Boolean NOT NULL DEFAULT 0,
+    deletedAt TEXT AS Instant,
+    type TEXT AS PlannedItemType NOT NULL DEFAULT 'EXPENSE'
+);
+
+CREATE INDEX expense_user_idx ON expense(userId);
+CREATE INDEX expense_date_idx ON expense(date);
+CREATE INDEX expense_category_idx ON expense(categoryId);
+CREATE INDEX expense_budget_idx ON expense(budgetId);
+
+-- Visible al usuario (UI): excluye tombstones.
+selectAll:
+SELECT *
+FROM expense
+WHERE deletedAt IS NULL
+ORDER BY date DESC, createdAt DESC;
+
+selectById:
+SELECT *
+FROM expense
+WHERE id = ? AND deletedAt IS NULL;
+
+selectByDateRange:
+SELECT *
+FROM expense
+WHERE deletedAt IS NULL AND date >= ? AND date <= ?
+ORDER BY date DESC, createdAt DESC;
+
+-- Check-in diario (Fase 7, RF-10): los gastos/ingresos de un presupuesto
+-- ya confirmados para un día puntual — incluye tanto los vinculados a un
+-- PlannedItem como los "gastos adicionales del día" (plannedItemId NULL).
+selectByBudgetAndDate:
+SELECT *
+FROM expense
+WHERE deletedAt IS NULL AND budgetId = ? AND date = ?
+ORDER BY createdAt ASC;
+
+-- Para el SyncManager: TODAS las filas, incluidos tombstones.
+selectAllForSync:
+SELECT *
+FROM expense;
+
+insert:
+INSERT INTO expense (
+    id, userId, amount, currency, categoryId, date, note, receiptImageUrl,
+    paymentMethod, createdAt, updatedAt, syncStatus, budgetId,
+    plannedItemId, isPlannedOverride, deletedAt, type
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+-- userId/createdAt NO se actualizan acá a propósito.
+update:
+UPDATE expense
+SET amount = ?, currency = ?, categoryId = ?, date = ?, note = ?,
+    receiptImageUrl = ?, paymentMethod = ?, updatedAt = ?, syncStatus = ?,
+    budgetId = ?, plannedItemId = ?, isPlannedOverride = ?, type = ?
+WHERE id = ?;
+
+-- "Borrado" público (ExpenseRepositoryImpl.delete): tombstone, no borra
+-- la fila.
+softDelete:
+UPDATE expense
+SET deletedAt = ?, updatedAt = ?, syncStatus = 'PENDING'
+WHERE id = ?;
+
+-- Usado por el SyncManager al confirmar un push exitoso (creación/edición).
+markSynced:
+UPDATE expense
+SET syncStatus = 'SYNCED'
+WHERE id = ?;
+
+-- Usado por el SyncManager en el pull: reemplaza la fila completa con lo
+-- que vino de Supabase (ya se decidió en Kotlin, vía LWW, que corresponde
+-- pisar la fila local).
+replaceFromRemote:
+INSERT OR REPLACE INTO expense (
+    id, userId, amount, currency, categoryId, date, note, receiptImageUrl,
+    paymentMethod, createdAt, updatedAt, syncStatus, budgetId,
+    plannedItemId, isPlannedOverride, deletedAt, type
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SYNCED', ?, ?, ?, NULL, ?);
+
+-- Limpieza final: un tombstone cuyo borrado ya se confirmó en el servidor
+-- no necesita seguir existiendo localmente.
+hardDeleteSynced:
+DELETE FROM expense
+WHERE id = ? AND deletedAt IS NOT NULL;
+
+-- Propagación de borrados entre dispositivos (SyncManager, agregado en
+-- el chat — resuelve el gap documentado en el KDoc de SyncManager): a
+-- diferencia de hardDeleteSynced (exige un tombstone local previo,
+-- deletedAt IS NOT NULL), esta fila nunca se tombstoneó acá — ya no
+-- existe en el servidor porque otro dispositivo la borró y ese borrado
+-- ya se confirmó ahí. Se borra sin condición, sin pasar por softDelete
+-- (no hay nada que re-subir: el servidor ya no tiene la fila).
+deleteById:
+DELETE FROM expense
+WHERE id = ?;
+
+-- Bug reportado por el usuario (multi-cuenta en el mismo dispositivo,
+-- agregado en el chat): AuthRepositoryImpl.signOut() no vaciaba el
+-- SQLite local, y como las queries de lectura (selectAll, etc.) nunca
+-- filtran por userId (pensadas para una sola cuenta a la vez por
+-- dispositivo), la cuenta B que iniciaba sesión después de que A
+-- cerrara sesión veía los datos de A. Se usa acá (sin WHERE, a
+-- diferencia de deleteById/hardDeleteSynced) para vaciar la tabla
+-- completa al cerrar sesión — el siguiente signIn repuebla todo desde
+-- cero vía el sync inicial normal.
+deleteAll:
+DELETE FROM expense;

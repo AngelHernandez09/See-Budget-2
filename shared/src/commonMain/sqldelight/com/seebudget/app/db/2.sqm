@@ -1,0 +1,6 @@
+import kotlinx.datetime.Instant;
+
+-- Version 2: Add deletedAt for tombstone-based sync.
+
+ALTER TABLE category ADD COLUMN deletedAt TEXT AS Instant;
+ALTER TABLE expense ADD COLUMN deletedAt TEXT AS Instant;

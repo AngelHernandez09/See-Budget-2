@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- Arquitectura (agregado en el chat) — requerido por ConnectivityManager.registerNetworkCallback, ver AndroidConnectivityObserver. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- Fase 8 (RF-05) — notificación diaria (recordatorio/check-in). -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <!-- Fase 8 (RF-05) — alarma exacta del recordatorio diario (Android 12+; ver ExactAlarmPermission/ReminderSchedulerAndroid). No se concede sola: el usuario la habilita a mano desde Ajustes del sistema, ver SettingsScreen. -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+
+    <!-- Fase 8 (RF-06) — Android 10+: guardado directo en Descargas vía MediaStore, sin permiso adicional. -->
+
+    <application
+        android:name=".SeeBudgetApplication"
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.SeeBudget">
+        <activity
+            android:exported="true"
+            android:name=".MainActivity"
+            android:launchMode="singleTask"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|density">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Fase 8 (RF-05) — dispara la notificación diaria (AlarmManager, ver ReminderSchedulerAndroid) y reprograma la de mañana. No expuesto: solo nuestro propio PendingIntent lo dispara. -->
+        <receiver
+            android:name="com.seebudget.app.notifications.ReminderAlarmReceiver"
+            android:exported="false" />
+
+        <!-- Fase 8 (RF-05) — reprograma la notificación diaria tras un reinicio del teléfono (AlarmManager no persiste alarmas entre reinicios). -->
+        <receiver
+            android:name="com.seebudget.app.notifications.BootCompletedReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Fase 8 (RF-06) — expone el CSV exportado (caché privado, Android 8-9) para "Compartir" vía FileExporterAndroid. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+    </application>
+
+</manifest>

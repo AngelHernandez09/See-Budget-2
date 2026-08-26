@@ -1,0 +1,28 @@
+import kotlinx.datetime.Instant;
+import kotlinx.datetime.LocalDate;
+import com.seebudget.app.domain.model.ProjectionSnapshotItem;
+import com.seebudget.app.domain.model.SyncStatus;
+import kotlin.collections.List;
+
+-- Version 6 (Fase 6, motor de proyección): tabla nueva — ProjectionSnapshot
+-- (ver ProjectionSnapshot.kt/ProjectionSnapshot.sq). CREATE TABLE acá, no
+-- ALTER: es una tabla completamente nueva. Mismo motivo que 3.sqm/4.sqm:
+-- sin este archivo, un dispositivo que ya tenía la app instalada nunca
+-- terminaría con esta tabla al actualizar.
+
+CREATE TABLE ProjectionSnapshot (
+    id TEXT NOT NULL PRIMARY KEY,
+    budgetId TEXT NOT NULL REFERENCES Budget(id),
+    userId TEXT NOT NULL,
+    label TEXT NOT NULL,
+    frozenInitialBalance INTEGER NOT NULL,
+    frozenStartDate TEXT AS LocalDate NOT NULL,
+    frozenBaseCurrency TEXT NOT NULL,
+    frozenPlannedItems TEXT AS List<ProjectionSnapshotItem> NOT NULL,
+    createdAt TEXT AS Instant NOT NULL,
+    updatedAt TEXT AS Instant NOT NULL,
+    syncStatus TEXT AS SyncStatus NOT NULL,
+    deletedAt TEXT AS Instant
+);
+
+CREATE INDEX projection_snapshot_budget_idx ON ProjectionSnapshot(budgetId);

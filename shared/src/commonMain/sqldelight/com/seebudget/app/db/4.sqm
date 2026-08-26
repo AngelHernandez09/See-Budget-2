@@ -1,0 +1,53 @@
+import kotlinx.datetime.Instant;
+import kotlinx.datetime.LocalDate;
+import kotlinx.datetime.LocalTime;
+import com.seebudget.app.domain.model.BudgetStatus;
+import com.seebudget.app.domain.model.PlannedItemType;
+import com.seebudget.app.domain.model.PlannedItemFrequency;
+import com.seebudget.app.domain.model.SyncStatus;
+
+-- Version 4 (Fase 5, módulo de presupuestos base): tablas nuevas — Budget
+-- y PlannedItem (ver Budget.kt/PlannedItem.kt). CREATE TABLE acá, no
+-- ALTER: son tablas completamente nuevas.
+--
+-- Sin este archivo, un dispositivo que ya tenía la app instalada (schema
+-- versión 4, con 1.sqm+2.sqm+3.sqm) nunca terminaría con estas dos tablas
+-- al actualizar — mismo motivo por el que se agregó 3.sqm en Fase 3 (ver
+-- ese comentario): Schema.migrate() solo replica los .sqm numerados, no
+-- vuelve a leer los .sq base como si fuera instalación nueva.
+
+CREATE TABLE Budget (
+    id TEXT NOT NULL PRIMARY KEY,
+    userId TEXT NOT NULL,
+    name TEXT NOT NULL,
+    startDate TEXT AS LocalDate NOT NULL,
+    endDate TEXT AS LocalDate,
+    status TEXT AS BudgetStatus NOT NULL,
+    initialBalance INTEGER NOT NULL,
+    baseCurrency TEXT NOT NULL,
+    notificationTime TEXT AS LocalTime,
+    createdAt TEXT AS Instant NOT NULL,
+    updatedAt TEXT AS Instant NOT NULL,
+    syncStatus TEXT AS SyncStatus NOT NULL,
+    deletedAt TEXT AS Instant
+);
+
+CREATE INDEX budget_user_idx ON Budget(userId);
+
+CREATE TABLE PlannedItem (
+    id TEXT NOT NULL PRIMARY KEY,
+    budgetId TEXT NOT NULL REFERENCES Budget(id),
+    userId TEXT NOT NULL,
+    type TEXT AS PlannedItemType NOT NULL,
+    amount INTEGER NOT NULL,
+    currency TEXT NOT NULL,
+    frequency TEXT AS PlannedItemFrequency NOT NULL,
+    billingDay INTEGER,
+    isActive INTEGER AS kotlin.Boolean NOT NULL DEFAULT 1,
+    createdAt TEXT AS Instant NOT NULL,
+    updatedAt TEXT AS Instant NOT NULL,
+    syncStatus TEXT AS SyncStatus NOT NULL,
+    deletedAt TEXT AS Instant
+);
+
+CREATE INDEX planned_item_budget_idx ON PlannedItem(budgetId);

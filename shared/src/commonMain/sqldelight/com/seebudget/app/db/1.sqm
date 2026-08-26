@@ -1,0 +1,4 @@
+-- Version 1: The initial tables (category and expense) are already created
+-- by the base schema in Category.sq and Expense.sq. This migration is
+-- kept empty to avoid "table already exists" errors when migrating from
+-- a version that already had these tables but didn't have the deletedAt column.

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- RF-06 — usado por FileExporterAndroid (shared/androidMain) para compartir el CSV
+     exportado vía "Compartir" en Android 8-9, donde se escribe en el caché privado
+     de la app en vez de en Descargas (ver KDoc de esa clase). -->
+<paths>
+    <cache-path name="exports" path="exports/" />
+</paths>

@@ -1,0 +1,17 @@
+import kotlinx.datetime.DayOfWeek;
+import kotlinx.datetime.LocalDate;
+
+-- Version 5 (Fase 6, motor de proyección): PlannedItem gana `name`
+-- (pedido explícito en el chat — gap del documento original, ver
+-- PlannedItem.kt) y `specificDate`/`dayOfWeek` (completan lo que faltaba
+-- para simular ONCE/WEEKLY con precisión, mismo patrón que `billingDay`
+-- para MONTHLY).
+--
+-- ALTER TABLE, no CREATE: PlannedItem ya existe desde la migración 4
+-- (Fase 5). `name` necesita DEFAULT '' porque ya puede haber filas
+-- existentes (presupuestos de prueba creados en Fase 5) — el usuario las
+-- edita después para ponerles un nombre real.
+
+ALTER TABLE PlannedItem ADD COLUMN name TEXT NOT NULL DEFAULT '';
+ALTER TABLE PlannedItem ADD COLUMN specificDate TEXT AS LocalDate;
+ALTER TABLE PlannedItem ADD COLUMN dayOfWeek TEXT AS DayOfWeek;

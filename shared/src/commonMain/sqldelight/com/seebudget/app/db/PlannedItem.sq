@@ -1,0 +1,145 @@
+import kotlinx.datetime.DayOfWeek;
+import kotlinx.datetime.Instant;
+import kotlinx.datetime.LocalDate;
+import com.seebudget.app.domain.model.PlannedItemType;
+import com.seebudget.app.domain.model.PlannedItemFrequency;
+import com.seebudget.app.domain.model.SyncStatus;
+
+-- RF-09 — plantilla de ítems periódicos/no periódicos (ingreso/egreso)
+-- que el ProjectionEngine (Fase 6) usa para simular días futuros.
+--
+-- userId (NOT NULL, denormalizado — decisión tomada en el chat): igual
+-- que Expense/Category, habilita políticas RLS simples sin join contra
+-- Budget. Ver supabase/migrations/0005_budget_planned_item.sql.
+--
+-- name (Fase 6, a pedido explícito en el chat): el documento no lo
+-- listaba en el modelo original — gap puro del documento, no una regla
+-- de negocio nueva. Ver PlannedItem.kt.
+--
+-- specificDate/dayOfWeek (Fase 6): completan lo que faltaba para simular
+-- con precisión ONCE/WEEKLY — mismo patrón que billingDay para MONTHLY
+-- (nullable acá, obligatorio según `frequency` en la capa de UI/lógica).
+-- Ver PlannedItem.kt para el detalle completo.
+--
+-- deletedAt: tombstone, mismo mecanismo que el resto del modelo. Se marca
+-- en cascada cuando se elimina su Budget (ver
+-- BudgetRepositoryImpl.delete()), o individualmente si el usuario borra
+-- un ítem planificado suelto desde el formulario del presupuesto.
+CREATE TABLE PlannedItem (
+    id TEXT NOT NULL PRIMARY KEY,
+    budgetId TEXT NOT NULL REFERENCES Budget(id),
+    userId TEXT NOT NULL,
+    name TEXT NOT NULL,
+    -- Fase 7 (RF-10) — nullable por compatibilidad, ver PlannedItem.kt.
+    categoryId TEXT,
+    type TEXT AS PlannedItemType NOT NULL,
+    amount INTEGER NOT NULL,
+    currency TEXT NOT NULL,
+    frequency TEXT AS PlannedItemFrequency NOT NULL,
+    billingDay INTEGER,
+    specificDate TEXT AS LocalDate,
+    dayOfWeek TEXT AS DayOfWeek,
+    isActive INTEGER AS kotlin.Boolean NOT NULL DEFAULT 1,
+    createdAt TEXT AS Instant NOT NULL,
+    updatedAt TEXT AS Instant NOT NULL,
+    syncStatus TEXT AS SyncStatus NOT NULL,
+    deletedAt TEXT AS Instant
+);
+
+CREATE INDEX planned_item_budget_idx ON PlannedItem(budgetId);
+
+-- Visible al usuario (UI): excluye tombstones, de un presupuesto puntual
+-- (formulario Crear/Editar presupuesto, Dashboard).
+selectByBudget:
+SELECT *
+FROM PlannedItem
+WHERE budgetId = ? AND deletedAt IS NULL
+ORDER BY createdAt ASC;
+
+selectById:
+SELECT *
+FROM PlannedItem
+WHERE id = ? AND deletedAt IS NULL;
+
+-- Para la cascada de borrado de Budget (BudgetRepositoryImpl.delete):
+-- todos los ítems vivos de ese presupuesto, para tombstonearlos uno por
+-- uno igual que un softDelete individual (mismo mecanismo de sync, así
+-- cada uno se sube/borra bien en su propio push).
+selectActiveIdsByBudget:
+SELECT id
+FROM PlannedItem
+WHERE budgetId = ? AND deletedAt IS NULL;
+
+-- Para el SyncManager: TODAS las filas, incluidos tombstones.
+selectAllForSync:
+SELECT *
+FROM PlannedItem;
+
+insert:
+INSERT INTO PlannedItem (
+    id, budgetId, userId, name, categoryId, type, amount, currency,
+    frequency, billingDay, specificDate, dayOfWeek, isActive, createdAt,
+    updatedAt, syncStatus, deletedAt
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+-- budgetId/userId/createdAt NO se actualizan acá a propósito.
+update:
+UPDATE PlannedItem
+SET name = ?, categoryId = ?, type = ?, amount = ?, currency = ?,
+    frequency = ?, billingDay = ?, specificDate = ?, dayOfWeek = ?,
+    isActive = ?, updatedAt = ?, syncStatus = ?
+WHERE id = ?;
+
+-- "Borrado" público (individual o vía cascada de Budget): tombstone, no
+-- borra la fila.
+softDelete:
+UPDATE PlannedItem
+SET deletedAt = ?, updatedAt = ?, syncStatus = 'PENDING'
+WHERE id = ?;
+
+-- Usado por el SyncManager al confirmar un push exitoso.
+markSynced:
+UPDATE PlannedItem
+SET syncStatus = 'SYNCED'
+WHERE id = ?;
+
+-- Usado por el SyncManager en el pull: reemplaza la fila completa con lo
+-- que vino de Supabase (ya se decidió en Kotlin, vía LWW, que corresponde
+-- pisar la fila local).
+replaceFromRemote:
+INSERT OR REPLACE INTO PlannedItem (
+    id, budgetId, userId, name, categoryId, type, amount, currency,
+    frequency, billingDay, specificDate, dayOfWeek, isActive, createdAt,
+    updatedAt, syncStatus, deletedAt
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SYNCED', NULL);
+
+-- Limpieza final: un tombstone cuyo borrado ya se confirmó en el servidor
+-- no necesita seguir existiendo localmente.
+hardDeleteSynced:
+DELETE FROM PlannedItem
+WHERE id = ? AND deletedAt IS NOT NULL;
+
+-- Propagación de borrados entre dispositivos (SyncManager, agregado en
+-- el chat — resuelve el gap documentado en el KDoc de SyncManager): a
+-- diferencia de hardDeleteSynced (exige un tombstone local previo,
+-- deletedAt IS NOT NULL), esta fila nunca se tombstoneó acá — ya no
+-- existe en el servidor porque otro dispositivo la borró y ese borrado
+-- ya se confirmó ahí. Se borra sin condición, sin pasar por softDelete
+-- (no hay nada que re-subir: el servidor ya no tiene la fila).
+deleteById:
+DELETE FROM PlannedItem
+WHERE id = ?;
+
+-- Bug reportado por el usuario (multi-cuenta en el mismo dispositivo,
+-- agregado en el chat): AuthRepositoryImpl.signOut() no vaciaba el
+-- SQLite local, y como las queries de lectura (selectAll, etc.) nunca
+-- filtran por userId (pensadas para una sola cuenta a la vez por
+-- dispositivo), la cuenta B que iniciaba sesión después de que A
+-- cerrara sesión veía los datos de A. Se usa acá (sin WHERE, a
+-- diferencia de deleteById/hardDeleteSynced) para vaciar la tabla
+-- completa al cerrar sesión — el siguiente signIn repuebla todo desde
+-- cero vía el sync inicial normal.
+deleteAll:
+DELETE FROM PlannedItem;
